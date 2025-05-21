@@ -7,12 +7,17 @@ import tokens
 from aiogram import Bot, Dispatcher, types, F
 
 Bot_Token = tokens.load_token("IgorTestBotbot") #@IgorTestBotbot
-# Bot_Token = "7659072923:AAGzGH0MEmtIJ6jyrRpZW7QQXgX3I5OzPBI" #@testIgobotbot
-
+# @testIgobotbot
 
 bot = Bot(Bot_Token)
 dp = Dispatcher()
 
+async def on_startup():
+    global session
+    session = aiohttp.ClientSession()
+
+async def on_shutdown():
+    await session.close()
 
 @dp.message(F.text == "/start")
 async def user_start_bot(message: types.Message):
@@ -58,9 +63,14 @@ async def get_crypto_currency(token: str) -> [float,float] :
         return None
 
 async def fetch_data(url, query):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=query) as response:
+    try:
+        async with session.get(url, params=query, timeout=10) as response:
+            if response.status != 200:
+                return None
             return await response.json()
+    except Exception as e:
+        print(f"Ошибка запроса к {url}: {e}")
+        return None
 
 @dp.callback_query(F.data.startswith("moex_course:"))
 async def get_moex_price(callback_data: types.CallbackQuery):
@@ -82,13 +92,15 @@ async def get_moex_price(callback_data: types.CallbackQuery):
 
 async def get_moex_data(ticker):
     url = f'https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}.json'
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            return await response.json()
+    async with session.get(url) as response:
+        return await response.json()
 
 async def main():
-    await dp.start_polling(bot)
-
+    await on_startup()
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await on_shutdown()
 
 if __name__ == '__main__':
     try:
