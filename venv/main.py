@@ -2,11 +2,12 @@ import datetime
 import requests
 import asyncio
 import aiohttp
+import tokens
 
 from aiogram import Bot, Dispatcher, types, F
 
-Bot_Token = "7600224844:AAHKPuIOLO3NzEu2y52MFO7ot0zSRIY9ZF8" #@IgorTestBotbot
-# Bot_Token = "7659072923:AAGxsh9FvWXf7l0wR4cF390ZSrqbMaLCv0g" #@testIgobotbot
+Bot_Token = tokens.load_token("IgorTestBotbot") #@IgorTestBotbot
+# Bot_Token = "7659072923:AAGzGH0MEmtIJ6jyrRpZW7QQXgX3I5OzPBI" #@testIgobotbot
 
 
 bot = Bot(Bot_Token)
@@ -32,8 +33,9 @@ async def crypto_course(callback_data: types.CallbackQuery):
     crypto = callback_data.data.split(":")[-1]
     price = await get_crypto_currency(crypto)
     if price:
+        date_str = datetime.datetime.now().date().strftime("%d-%m-%Y")
         await callback_data.message.answer(
-            f"Курс {crypto.upper()} на {datetime.datetime.now().date().strftime("%d-%m-%Y")} равен: {price[0]} RUB или {price[1]} USD"
+            f"Курс {crypto.upper()} на {date_str} равен: {price[0]} RUB или {price[1]} USD"
         )
     else:
         await callback_data.message.answer(
@@ -63,22 +65,26 @@ async def fetch_data(url, query):
 @dp.callback_query(F.data.startswith("moex_course:"))
 async def get_moex_price(callback_data: types.CallbackQuery):
     ticker = callback_data.data.split(":")[-1]
-    url = f'https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}.json'
-    response = requests.get(url)
-    data = response.json()
+    data = await get_moex_data(ticker)
 
     try:
         market_data = data['marketdata']['data'][0]
         price_index = data['marketdata']['columns'].index('LAST')
 
+        date_str = datetime.datetime.now().date().strftime("%d-%m-%Y")
         await callback_data.message.answer(
-            f"Курс {ticker} на {datetime.datetime.now().date().strftime("%d-%m-%Y")} равен: {market_data[price_index]} RUB "
+            f"Курс {ticker} на {date_str} равен: {market_data[price_index]} RUB "
         )
     except Exception as e:
         print("Ошибка при получении данных:", e)
         return None
     await callback_data.answer()
 
+async def get_moex_data(ticker):
+    url = f'https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}.json'
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            return await response.json()
 
 async def main():
     await dp.start_polling(bot)
