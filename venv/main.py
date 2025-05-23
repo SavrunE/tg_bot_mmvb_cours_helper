@@ -1,12 +1,14 @@
 import datetime
-import requests
 import asyncio
 import aiohttp
 import tokens
+import price_checker
+import keyboards
 
 from aiogram import Bot, Dispatcher, types, F
 
-Bot_Token = tokens.load_token("IgorTestBotbot") #@IgorTestBotbot
+Bot_Token = tokens.load_token("Trade_helperbot")
+# Bot_Token = tokens.load_token("IgorTestBotbot") #@IgorTestBotbot
 # @testIgobotbot
 
 bot = Bot(Bot_Token)
@@ -19,18 +21,19 @@ async def on_startup():
 async def on_shutdown():
     await session.close()
 
+@dp.message(F.text.regexp(r"^[A-Za-z0-9]+$"))
+async def handle_ticker_query(message: types.Message):
+    ticker = message.text.strip().upper()
+    await process_moex_ticker(message, ticker)
+
 @dp.message(F.text == "/start")
 async def user_start_bot(message: types.Message):
     await message.answer(
-        f"Привет {message.from_user.first_name}\n"
-        "Этот бот покажет тебе актуальную цену актива MMVB и цену его закрытия.",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text="BTC", callback_data="crypto_course:btc"),
-                types.InlineKeyboardButton(text="ETH", callback_data="crypto_course:eth"),
-                types.InlineKeyboardButton(text="SBER", callback_data="moex_course:SBER")],
-            ]
-        )
+        f"Привет {message.from_user.first_name}!\n"
+        "Этот бот покажет тебе актуальную цену любого из нижеприведенных активов и сравнит с ценой закрытия предыдущего дня.\n\n"
+        "Так-же ты можешь написать любой индекс moex в чат (Пример `sber`) и получить результат.",
+        parse_mode="Markdown",
+        reply_markup = await keyboards.get_main_keyboard()
     )
 
 @dp.callback_query(F.data.startswith("crypto_course:"))
@@ -51,7 +54,6 @@ async def crypto_course(callback_data: types.CallbackQuery):
 async def get_crypto_currency(token: str) -> [float,float] :
     url = "https://api.cryptapi.io/" + token + "/info/"
     query = {"prices": "1"}
-    # response = requests.get(url, params=query) #работает синхронно, нужно переделать на асинхрон
     response = await fetch_data(url, query)
 
     if response:
@@ -73,27 +75,55 @@ async def fetch_data(url, query):
         return None
 
 @dp.callback_query(F.data.startswith("moex_course:"))
-async def get_moex_price(callback_data: types.CallbackQuery):
-    ticker = callback_data.data.split(":")[-1]
-    data = await get_moex_data(ticker)
+async def get_moex_price_callback(callback: types.CallbackQuery):
+    ticker = callback.data.split(":")[-1]
+    await process_moex_ticker(callback.message, ticker)
+    await callback.answer()
 
+# @dp.callback_query(F.data.startswith("moex_course:"))
+# async def get_moex_price(callback_data: types.CallbackQuery):
+#     ticker = callback_data.data.split(":")[-1]
+#
+#     try:
+#         price = await price_checker.get_moex_price(ticker)
+#         difference_price = price[0] - price[1]
+#         formatted_diff = f"{difference_price:.8f}".rstrip('0').rstrip('.')
+#         # difference_price = round(price[0] - price[1], 2)
+#
+#         date_str = datetime.datetime.now().date().strftime("%d-%m-%Y")
+#         await callback_data.message.answer(
+#             f"Курс {ticker} на {date_str}:\n"
+#             f"Текущая цена: `{price[0]}` RUB\n"
+#             f"Цена закрытия: `{price[1]}` RUB\n"
+#             f"Разница: *{formatted_diff}* RUB", parse_mode="Markdown"
+#         )
+#     except Exception as e:
+#         print("Ошибка при получении данных:", e)
+#         return None
+#     await callback_data.answer()
+
+async def process_moex_ticker(message: types.Message, ticker: str):
     try:
-        market_data = data['marketdata']['data'][0]
-        price_index = data['marketdata']['columns'].index('LAST')
+        price = await price_checker.get_moex_price(ticker)
+
+        if price is None or price[0] is None or price[1] is None:
+            await message.answer(f"❌ Данные по тикеру `{ticker}` не найдены.", parse_mode="Markdown")
+            return
+
+        current, close = price
+        diff = current - close
+        formatted_diff = f"{diff:.8f}".rstrip('0').rstrip('.')
 
         date_str = datetime.datetime.now().date().strftime("%d-%m-%Y")
-        await callback_data.message.answer(
-            f"Курс {ticker} на {date_str} равен: {market_data[price_index]} RUB "
+        await message.answer(
+            f"Курс `{ticker}` на {date_str}:\n"
+            f"Текущая цена: `{current}` RUB\n"
+            f"Цена закрытия: `{close}` RUB\n"
+            f"Разница: *{formatted_diff}* RUB", parse_mode="Markdown"
         )
     except Exception as e:
         print("Ошибка при получении данных:", e)
-        return None
-    await callback_data.answer()
-
-async def get_moex_data(ticker):
-    url = f'https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}.json'
-    async with session.get(url) as response:
-        return await response.json()
+        await message.answer("⚠️ Произошла ошибка при получении данных.")
 
 async def main():
     await on_startup()
